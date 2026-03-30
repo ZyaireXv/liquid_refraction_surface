@@ -14,6 +14,10 @@ void main() {
       find.byKey(const ValueKey<String>('open-settings-button')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const ValueKey<String>('content-action-button')),
+      findsOneWidget,
+    );
 
     await tester.tap(
       find.byKey(const ValueKey<String>('open-settings-button')),
@@ -21,9 +25,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Surface Settings'), findsOneWidget);
+    expect(find.text('Placement'), findsOneWidget);
+    expect(find.text('Background'), findsWidgets);
+    expect(find.text('Preset'), findsOneWidget);
     expect(find.text('Metalness'), findsOneWidget);
-    expect(find.text('Auto Drops'), findsOneWidget);
-    expect(find.text('Image'), findsOneWidget);
     expect(
       find.byKey(const ValueKey<String>('close-settings-button')),
       findsOneWidget,

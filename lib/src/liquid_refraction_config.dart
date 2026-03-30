@@ -1,14 +1,20 @@
+import 'liquid_rain_intensity.dart';
+
 /// 液态折射效果的基础参数。
 ///
 /// 第一版先把已经从参考项目里验证过、并且能直观看出差异的参数收进来。
 /// 这样后面接更重的渲染实现时，外部调用方式可以保持稳定，不需要一边写实现一边改 API。
 class LiquidRefractionConfig {
+  static const Object _unsetRainDropCount = Object();
+
   const LiquidRefractionConfig({
     this.metalness = 0.35,
     this.roughness = 0.45,
     this.displacementScale = 2.0,
     this.chromaticAberration = 0.0,
     this.enableAutoDrops = false,
+    this.rainIntensity = LiquidRainIntensity.light,
+    this.rainDropCount,
     this.cellSize = 18.0,
     this.interactionRadius = 86.0,
     this.highlightOpacity = 0.14,
@@ -38,6 +44,20 @@ class LiquidRefractionConfig {
   /// 自动落滴更像附加氛围，不应该先于手势反馈成为默认行为。
   final bool enableAutoDrops;
 
+  /// 自动雨滴的强度档位。
+  ///
+  /// 这个值决定默认的落点频率、单滴体量和扩散距离。
+  /// 之所以单独做成档位，是因为“像小雨”还是“像大雨”本质是整组行为一起变，
+  /// 只调一个强度系数，很容易只得到更密的噪声，雨感反而不成立。
+  final LiquidRainIntensity rainIntensity;
+
+  /// 每轮自动注入时同时落下的雨滴数量。
+  ///
+  /// 这里和粒子系统里的“常驻粒子数”不是一回事。
+  /// 当前实现是连续位移场，没有独立雨滴对象，所以这个值控制的是一次注入里打进场里的落点数。
+  /// 传 `null` 时会按 `rainIntensity` 走默认值，适合大部分场景。
+  final int? rainDropCount;
+
   /// 采样网格尺寸。
   ///
   /// 这里控制的是位移场网格密度，不是屏幕像素级精度。
@@ -62,6 +82,8 @@ class LiquidRefractionConfig {
     double? displacementScale,
     double? chromaticAberration,
     bool? enableAutoDrops,
+    LiquidRainIntensity? rainIntensity,
+    Object? rainDropCount = _unsetRainDropCount,
     double? cellSize,
     double? interactionRadius,
     double? highlightOpacity,
@@ -72,6 +94,12 @@ class LiquidRefractionConfig {
       displacementScale: displacementScale ?? this.displacementScale,
       chromaticAberration: chromaticAberration ?? this.chromaticAberration,
       enableAutoDrops: enableAutoDrops ?? this.enableAutoDrops,
+      rainIntensity: rainIntensity ?? this.rainIntensity,
+      // 这里不用普通的 `??`，是因为手动数量本身允许传 `null`。
+      // 如果还沿用默认写法，外部就没法通过 `copyWith` 把“手动覆盖”清回“跟随强度档位”。
+      rainDropCount: identical(rainDropCount, _unsetRainDropCount)
+          ? this.rainDropCount
+          : rainDropCount as int?,
       cellSize: cellSize ?? this.cellSize,
       interactionRadius: interactionRadius ?? this.interactionRadius,
       highlightOpacity: highlightOpacity ?? this.highlightOpacity,
@@ -87,6 +115,8 @@ class LiquidRefractionConfig {
             other.displacementScale == displacementScale &&
             other.chromaticAberration == chromaticAberration &&
             other.enableAutoDrops == enableAutoDrops &&
+            other.rainIntensity == rainIntensity &&
+            other.rainDropCount == rainDropCount &&
             other.cellSize == cellSize &&
             other.interactionRadius == interactionRadius &&
             other.highlightOpacity == highlightOpacity;
@@ -99,6 +129,8 @@ class LiquidRefractionConfig {
     displacementScale,
     chromaticAberration,
     enableAutoDrops,
+    rainIntensity,
+    rainDropCount,
     cellSize,
     interactionRadius,
     highlightOpacity,

@@ -9,6 +9,8 @@ import 'package:flutter/widgets.dart';
 import 'liquid_displacement_field.dart';
 import 'liquid_field_texture.dart';
 import 'liquid_refraction_config.dart';
+import 'liquid_rain_intensity.dart';
+import 'liquid_refraction_placement.dart';
 import 'liquid_refraction_shader_layer.dart';
 
 /// 液态折射舞台组件。
@@ -18,30 +20,41 @@ import 'liquid_refraction_shader_layer.dart';
 class LiquidRefractionSurface extends StatefulWidget {
   const LiquidRefractionSurface({
     super.key,
-    this.child,
+    required this.child,
+    this.backdrop,
     this.backgroundImage,
     this.backgroundColor,
     this.fit = BoxFit.cover,
     this.alignment = Alignment.center,
     this.clipBehavior = Clip.hardEdge,
+    this.placement = LiquidRefractionPlacement.content,
     this.config = const LiquidRefractionConfig(),
   });
 
   /// 放在液态表面下方的内容。
   ///
-  /// 参考项目里既有文字舞台，也有图片实验页。
-  /// 这里先统一成 child，是为了避免一开始就把文字版和图片版拆成两套组件。
-  final Widget? child;
+  /// 这里改成必传，是为了让调用方式和容器型组件保持一致：
+  /// 页面总有一棵明确的内容树，液态层只是决定包在它外面、压在它上面，
+  /// 还是直接作用到它本身。
+  final Widget child;
+
+  /// 提供给液态层采样的底层内容。
+  ///
+  /// `content` 模式下通常不需要单独传，因为 child 自己就会被直接折射。
+  /// `background` 模式下更建议提供这一层，
+  /// 否则液态层只能基于纯色或透明底做采样，折射层次会弱很多。
+  final Widget? backdrop;
 
   /// 直接作为底图输入的图片资源。
   ///
-  /// 如果后续页面只需要图片折射，可以直接传这一个参数；
-  /// 如果要做文字舞台，则由调用方先把文字排版成 child。
+  /// 这条路径先保留，是为了兼容当前仓库里已经存在的图片试验方式。
+  /// 但后续主推荐用法会转到 `backdrop`，让外部统一走 widget 组合。
   final ImageProvider<Object>? backgroundImage;
   final Color? backgroundColor;
   final BoxFit fit;
   final Alignment alignment;
   final Clip clipBehavior;
+  final LiquidRefractionPlacement placement;
   final LiquidRefractionConfig config;
 
   @override
@@ -69,7 +82,8 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
   double _fieldTextureElapsed = 0.0;
   Offset? _lastPointerPosition;
   bool _autoDropEnabled = false;
-  double _autoDropTime = 0.0;
+  double _autoDropElapsed = 0.0;
+  double _nextAutoDropDelay = 0.0;
   // 位移场更新得比纹理构建更快时，这组状态用来合并请求。
   // 这样动画高频阶段最多只保留“当前正在构建的一张”和“最新的一张待构建”，
   // 不会因为旧帧还没完成就继续堆积无意义的中间结果。
@@ -85,6 +99,7 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
       ..addListener(_handleTick);
     _field = _createField(widget.config);
     _autoDropEnabled = widget.config.enableAutoDrops;
+    _resetAutoDropSchedule();
   }
 
   @override
@@ -102,8 +117,13 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
       _syncTicker();
     }
 
-    if (oldWidget.config.enableAutoDrops != widget.config.enableAutoDrops) {
+    final autoDropConfigChanged =
+        oldWidget.config.enableAutoDrops != widget.config.enableAutoDrops ||
+        oldWidget.config.rainIntensity != widget.config.rainIntensity ||
+        oldWidget.config.rainDropCount != widget.config.rainDropCount;
+    if (autoDropConfigChanged) {
       _autoDropEnabled = widget.config.enableAutoDrops;
+      _resetAutoDropSchedule();
       _syncTicker();
     }
   }
@@ -165,18 +185,11 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
     _refreshFieldTextureIfNeeded();
 
     if (_autoDropEnabled && _size.isFinite && !_size.isEmpty) {
-      _autoDropTime += dt;
-      final autoDropInterval = 0.9 + (widget.config.roughness * 0.7);
-      if (_autoDropTime >= autoDropInterval) {
-        _autoDropTime = 0.0;
-        _injectDisturbance(
-          Offset(
-            _randomBetween(_size.width * 0.16, _size.width * 0.84),
-            _randomBetween(_size.height * 0.16, _size.height * 0.84),
-          ),
-          strength: 0.22,
-          isSplash: false,
-        );
+      _autoDropElapsed += dt;
+      while (_autoDropElapsed >= _nextAutoDropDelay) {
+        _autoDropElapsed -= _nextAutoDropDelay;
+        _injectAutoRainBurst();
+        _nextAutoDropDelay = _resolveNextAutoDropDelay();
       }
     }
 
@@ -224,6 +237,15 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
     _injectDisturbance(event.localPosition, strength: 0.9, isSplash: true);
   }
 
+  /// 每次切换自动雨滴配置时，都重新计算下一次注入的时机。
+  ///
+  /// 如果这里不重置，用户刚把“小雨”切到“大雨”时，界面还会先沿用上一档的等待时间，
+  /// 手感会有一种“明明切了，但半天没变化”的迟滞。
+  void _resetAutoDropSchedule() {
+    _autoDropElapsed = 0.0;
+    _nextAutoDropDelay = _resolveNextAutoDropDelay();
+  }
+
   void _handlePointerMove(PointerEvent event) {
     final position = event.localPosition;
     final previousPosition = _lastPointerPosition;
@@ -242,9 +264,11 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
 
     final strength = (0.18 + (distance / widget.config.interactionRadius))
         .clamp(0.16, 0.58);
+    final fieldPreviousPosition = _mapPointerToFieldSpace(previousPosition);
+    final fieldPosition = _mapPointerToFieldSpace(position);
     _field.addImpulseTrail(
-      previousPosition,
-      position,
+      fieldPreviousPosition,
+      fieldPosition,
       // 拖动覆盖范围收窄以后，液面会更像被手势掠过，
       // 而不是整条路径都被“抹出一层厚浆”。
       radius: widget.config.interactionRadius * 0.5,
@@ -267,8 +291,9 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
       return;
     }
 
+    final fieldCenter = _mapPointerToFieldSpace(center);
     _field.addImpulse(
-      center,
+      fieldCenter,
       radius: widget.config.interactionRadius * (isSplash ? 0.82 : 0.58),
       strength: strength,
     );
@@ -279,6 +304,141 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
     if (mounted) {
       setState(() {});
     }
+  }
+
+  /// 自动雨滴和手势波纹共用同一张位移场，但它们的注入形态不该一样。
+  ///
+  /// 手势更像一团连续外推的能量，雨滴则应该是一个短促的落点加几圈外扩波纹。
+  /// 这里单独走 `addRaindrop`，是为了把“像雨滴”这件事落在场本身，而不是只靠 shader 硬描边。
+  void _injectRaindrop(
+    Offset center, {
+    required double radius,
+    required double strength,
+    required int rippleCount,
+    required double travelFactor,
+  }) {
+    if (_size.isEmpty) {
+      return;
+    }
+
+    final fieldCenter = _mapPointerToFieldSpace(center);
+    _field.addRaindrop(
+      fieldCenter,
+      radius: radius,
+      strength: strength,
+      rippleCount: rippleCount,
+      travelFactor: travelFactor,
+    );
+  }
+
+  /// 自动模式下一次注入一批雨滴。
+  ///
+  /// 当前实现不是粒子系统，所以这里的“数量”指的是一次节拍里同时打进位移场的落点数。
+  /// 这样做的好处是保留了连续位移场的优势，同时也能把“小雨稀疏、大雨成片”的节奏做出来。
+  void _injectAutoRainBurst() {
+    if (_size.isEmpty) {
+      return;
+    }
+
+    final profile = _resolveAutoRainProfile();
+    final burstCount = _resolveAutoRainBurstCount(profile);
+    final horizontalMargin = _size.width * 0.14;
+    final verticalMargin = _size.height * 0.14;
+
+    for (var dropIndex = 0; dropIndex < burstCount; dropIndex++) {
+      _injectRaindrop(
+        Offset(
+          _randomBetween(horizontalMargin, _size.width - horizontalMargin),
+          _randomBetween(verticalMargin, _size.height - verticalMargin),
+        ),
+        radius:
+            widget.config.interactionRadius *
+            _randomBetween(profile.minRadiusFactor, profile.maxRadiusFactor),
+        strength: _randomBetween(profile.minStrength, profile.maxStrength),
+        rippleCount: _randomInt(profile.minRippleCount, profile.maxRippleCount),
+        travelFactor: _randomBetween(
+          profile.minTravelFactor,
+          profile.maxTravelFactor,
+        ),
+      );
+    }
+
+    _fieldTextureElapsed = _fieldTextureRefreshInterval;
+    _refreshFieldTextureIfNeeded(force: true);
+    _syncTicker();
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  _AutoRainProfile _resolveAutoRainProfile() {
+    return switch (widget.config.rainIntensity) {
+      // 小雨不只是更稀，而是单滴更轻，波圈也更短。
+      // 这样画面会更安静，不会把整个表面一直搅得很满。
+      LiquidRainIntensity.light => const _AutoRainProfile(
+          minInterval: 0.62,
+          maxInterval: 0.96,
+          defaultBurstCount: 1,
+          minRadiusFactor: 0.18,
+          maxRadiusFactor: 0.28,
+          minStrength: 0.16,
+          maxStrength: 0.24,
+          minRippleCount: 2,
+          maxRippleCount: 2,
+          minTravelFactor: 0.92,
+          maxTravelFactor: 1.2,
+        ),
+      LiquidRainIntensity.medium => const _AutoRainProfile(
+          minInterval: 0.34,
+          maxInterval: 0.62,
+          defaultBurstCount: 2,
+          minRadiusFactor: 0.24,
+          maxRadiusFactor: 0.34,
+          minStrength: 0.2,
+          maxStrength: 0.3,
+          minRippleCount: 2,
+          maxRippleCount: 3,
+          minTravelFactor: 1.18,
+          maxTravelFactor: 1.5,
+        ),
+      LiquidRainIntensity.heavy => const _AutoRainProfile(
+          minInterval: 0.16,
+          maxInterval: 0.3,
+          defaultBurstCount: 3,
+          minRadiusFactor: 0.3,
+          maxRadiusFactor: 0.46,
+          minStrength: 0.26,
+          maxStrength: 0.4,
+          minRippleCount: 3,
+          maxRippleCount: 4,
+          minTravelFactor: 1.5,
+          maxTravelFactor: 2.0,
+        ),
+    };
+  }
+
+  /// 默认数量会跟屏幕面积一起轻微缩放，手动覆盖时则尊重调用方输入。
+  ///
+  /// 这样做和 `ambient_effects_container` 的思路一致：
+  /// 档位负责给出合理默认值，手动数量负责覆盖默认值。
+  /// 这里不把面积缩放做得太激进，是为了避免大屏下一口气注入太多落点，直接把液面打成噪声。
+  int _resolveAutoRainBurstCount(_AutoRainProfile profile) {
+    final manualCount = widget.config.rainDropCount;
+    if (manualCount != null) {
+      return manualCount.clamp(1, 12);
+    }
+
+    const referenceArea = 390.0 * 844.0;
+    final areaScale = ((_size.width * _size.height) / referenceArea).clamp(
+      0.82,
+      1.45,
+    );
+    return math.max(1, (profile.defaultBurstCount * areaScale).round());
+  }
+
+  double _resolveNextAutoDropDelay() {
+    final profile = _resolveAutoRainProfile();
+    return _randomBetween(profile.minInterval, profile.maxInterval);
   }
 
   void _refreshFieldTextureIfNeeded({bool force = false}) {
@@ -352,7 +512,21 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
     }
   }
 
-  Widget _buildContent() {
+  bool get _hasBackdropSource {
+    return widget.backgroundColor != null ||
+        widget.backgroundImage != null ||
+        widget.backdrop != null;
+  }
+
+  Widget _buildBackdropSource() {
+    if (!_hasBackdropSource) {
+      // 背景模式下，调用方有时只想要一层轻薄的液面高光，
+      // 不一定每次都准备一套完整的底图。
+      // 这里用透明盒子兜住尺寸，保证 shader 和手势链路还能工作，
+      // 只是折射信息会比提供 backdrop 时更少。
+      return const SizedBox.expand();
+    }
+
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
@@ -364,16 +538,83 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
             fit: widget.fit,
             alignment: widget.alignment,
           ),
-        ...?(widget.child == null ? null : <Widget>[widget.child!]),
+        if (widget.backdrop != null) widget.backdrop!,
       ],
     );
+  }
+
+  Widget _buildPresentedChild() {
+    return widget.child;
+  }
+
+  Widget _buildContentSource() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        if (_hasBackdropSource) _buildBackdropSource(),
+        _buildPresentedChild(),
+      ],
+    );
+  }
+
+  Widget _buildVisibleSceneWithoutEffect() {
+    switch (widget.placement) {
+      case LiquidRefractionPlacement.content:
+        return _buildContentSource();
+      case LiquidRefractionPlacement.background:
+        return Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            if (_hasBackdropSource) _buildBackdropSource(),
+            _buildPresentedChild(),
+          ],
+        );
+    }
+  }
+
+  Offset _mapPointerToFieldSpace(Offset position) {
+    if (defaultTargetPlatform != TargetPlatform.android || _size.isEmpty) {
+      return position;
+    }
+
+    // Android 侧当前拿到的屏幕坐标系和位移纹理采样方向还没有完全对齐。
+    // 直接把触点写进场里，会出现“手指点在下方，波纹却跑到上方”的错位。
+    // 这里先把输入映射到位移场实际使用的坐标系，优先保证交互落点正确。
+    return Offset(position.dx, _size.height - position.dy);
+  }
+
+  Widget _buildEffectScene() {
+    switch (widget.placement) {
+      case LiquidRefractionPlacement.content:
+        return LiquidRefractionShaderLayer(
+          config: widget.config,
+          fieldTexture: _fieldTexture,
+          animationTime: _animationTime,
+          child: _buildContentSource(),
+        );
+      case LiquidRefractionPlacement.background:
+        return Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            Positioned.fill(
+              child: LiquidRefractionShaderLayer(
+                config: widget.config,
+                fieldTexture: _fieldTexture,
+                animationTime: _animationTime,
+                child: _buildBackdropSource(),
+              ),
+            ),
+            _buildPresentedChild(),
+          ],
+        );
+    }
   }
 
   Widget _buildUnsupportedMessage() {
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        _buildContent(),
+        _buildVisibleSceneWithoutEffect(),
         const Positioned.fill(
           child: IgnorePointer(child: ColoredBox(color: Color(0xA6141822))),
         ),
@@ -423,8 +664,6 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
 
   @override
   Widget build(BuildContext context) {
-    final content = _buildContent();
-
     return ClipRect(
       clipBehavior: widget.clipBehavior,
       child: _MeasureSize(
@@ -437,12 +676,7 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
           onPointerUp: (_) => _lastPointerPosition = null,
           onPointerCancel: (_) => _lastPointerPosition = null,
           child: _isSupportedPlatform
-              ? LiquidRefractionShaderLayer(
-                  config: widget.config,
-                  fieldTexture: _fieldTexture,
-                  animationTime: _animationTime,
-                  child: content,
-                )
+              ? _buildEffectScene()
               : _buildUnsupportedMessage(),
         ),
       ),
@@ -452,6 +686,38 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
   double _randomBetween(double min, double max) {
     return min + ((max - min) * _random.nextDouble());
   }
+
+  int _randomInt(int min, int max) {
+    return min + _random.nextInt((max - min) + 1);
+  }
+}
+
+class _AutoRainProfile {
+  const _AutoRainProfile({
+    required this.minInterval,
+    required this.maxInterval,
+    required this.defaultBurstCount,
+    required this.minRadiusFactor,
+    required this.maxRadiusFactor,
+    required this.minStrength,
+    required this.maxStrength,
+    required this.minRippleCount,
+    required this.maxRippleCount,
+    required this.minTravelFactor,
+    required this.maxTravelFactor,
+  });
+
+  final double minInterval;
+  final double maxInterval;
+  final int defaultBurstCount;
+  final double minRadiusFactor;
+  final double maxRadiusFactor;
+  final double minStrength;
+  final double maxStrength;
+  final int minRippleCount;
+  final int maxRippleCount;
+  final double minTravelFactor;
+  final double maxTravelFactor;
 }
 
 /// 通过渲染对象拿到布局后的真实尺寸。
@@ -493,6 +759,9 @@ class _MeasureSizeRenderObject extends RenderProxyBox {
     }
 
     _lastReportedSize = newSize;
+    // 这里不在布局阶段直接回调，是为了避开“父级还在继续布局，子级已经开始重建场”的节奏冲突。
+    // 位移场一旦在布局链路中同步重建，很容易把本来只该发生一次的初始化放大成多次。
+    // 放到下一帧再上报，虽然晚半拍，但尺寸会更稳定，也更符合这个组件的使用场景。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       onChange(newSize);
     });

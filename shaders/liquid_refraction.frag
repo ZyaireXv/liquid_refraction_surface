@@ -16,8 +16,25 @@ vec2 safeUv(vec2 uv) {
   return clamp(uv, vec2(0.001), vec2(0.999));
 }
 
-vec4 sampleField(vec2 uv) {
-  return texture(uField, safeUv(uv));
+vec2 toTextureUv(vec2 screenUv) {
+  vec2 textureUv = screenUv;
+
+#ifdef IMPELLER_TARGET_OPENGLES
+  // Android 侧常见的是 OpenGLES 管线，采样坐标和屏幕坐标在 Y 轴上的朝向并不一致。
+  // 这里统一先把“屏幕空间坐标”换成“纹理采样坐标”，后面的上下左右邻域采样都继续基于屏幕语义，
+  // 这样一来法线推导和折射偏移就不会因为平台差异而整体反向。
+  textureUv.y = 1.0 - textureUv.y;
+#endif
+
+  return safeUv(textureUv);
+}
+
+vec4 sampleField(vec2 screenUv) {
+  return texture(uField, toTextureUv(screenUv));
+}
+
+vec4 sampleScene(vec2 screenUv) {
+  return texture(uTexture, toTextureUv(screenUv));
 }
 
 vec2 decodeNormal(vec4 fieldSample) {
@@ -61,12 +78,17 @@ void main() {
   vec2 tangent = normalize(vec2(normal.y + 0.0001, -normal.x + 0.0001));
   vec2 chromaticOffset = tangent * chromatic;
 
+  vec4 outerSampleR = sampleScene(uv + offset + shimmerOffset + chromaticOffset);
+  vec4 outerSampleG = sampleScene(uv + offset + (shimmerOffset * 0.75));
+  vec4 outerSampleB = sampleScene(uv + offset + shimmerOffset - chromaticOffset);
+  vec4 innerSample = sampleScene(uv + innerOffset);
+
   vec3 outerColor = vec3(
-    texture(uTexture, safeUv(uv + offset + shimmerOffset + chromaticOffset)).r,
-    texture(uTexture, safeUv(uv + offset + (shimmerOffset * 0.75))).g,
-    texture(uTexture, safeUv(uv + offset + shimmerOffset - chromaticOffset)).b
+    outerSampleR.r,
+    outerSampleG.g,
+    outerSampleB.b
   );
-  vec3 innerColor = texture(uTexture, safeUv(uv + innerOffset)).rgb;
+  vec3 innerColor = innerSample.rgb;
   vec3 color = mix(outerColor, innerColor, 0.08 + (thickness * 0.14));
 
   float highlight = smoothstep(0.04, 0.3, surfaceEnergy);

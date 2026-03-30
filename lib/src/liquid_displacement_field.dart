@@ -33,11 +33,31 @@ class LiquidDisplacementField {
   bool get isReady => _columns > 0 && _rows > 0;
   int get revision => _revision;
 
+  /// 动画继续播放的最小能量阈值。
+  ///
+  /// 这个值不能只看某一帧的视觉强弱，还要兼顾 ticker 什么时候该停。
+  /// 阈值太低，液面明明已经回到静止，动画还会多跑不少空帧；
+  /// 阈值太高，细小波纹刚扩开就会被当成“已经结束”。
+  ///
+  /// 这里按刚度和阻尼做一个很轻的动态收口：
+  /// - 刚度高时，波峰回弹更快，能量衰减阶段更尖，需要略高一点阈值避免尾巴拖太久
+  /// - 阻尼低时，场会保留更多余波，也需要略高一点阈值防止 ticker 长时间空转
+  ///
+  /// 范围仍然收在接近原来 `0.0008` 的附近，目的是保留既有手感，只把极端配置下的停表时机收得更稳。
+  double get _activityThreshold {
+    final normalizedStiffness = stiffness.clamp(0.0, 1.0);
+    final retainedEnergy = (1.0 - damping).clamp(0.0, 1.0);
+    return (0.00055 +
+            (normalizedStiffness * 0.0011) +
+            (retainedEnergy * 0.012))
+        .clamp(0.0007, 0.0014);
+  }
+
   /// 当前场里是否还有足够明显的扰动。
   ///
   /// 这里不直接遍历整张图判断，而是复用每次更新过程里记录的峰值。
   /// 这样动画是否继续播放可以更轻地决策，避免为了停表反复全量扫描。
-  bool get hasActivity => _peakEnergy > 0.0008;
+  bool get hasActivity => _peakEnergy > _activityThreshold;
 
   void resize(Size size) {
     if (!size.isFinite || size.isEmpty) {
@@ -98,6 +118,67 @@ class LiquidDisplacementField {
       strength: strength,
       direction: Offset.zero,
     );
+    _peakEnergy = math.max(_peakEnergy, strength.abs());
+    _revision++;
+  }
+
+  /// 注入更像雨滴落水的扰动。
+  ///
+  /// 手势更适合“连续推一把”的能量分布，雨滴则相反，
+  /// 它需要一个更尖的落点和更明确的外扩波圈。
+  /// 这里不新建独立的雨滴对象，而是直接往同一张位移场里压入几道同心环，
+  /// 这样自动雨滴和手势波纹还能自然叠加，不会出现两套系统互相打架的问题。
+  void addRaindrop(
+    Offset point, {
+    required double radius,
+    required double strength,
+    required int rippleCount,
+    required double travelFactor,
+  }) {
+    if (!isReady || radius <= 0 || strength == 0) {
+      return;
+    }
+
+    final resolvedRippleCount = math.max(1, rippleCount);
+    final resolvedTravelFactor = math.max(0.4, travelFactor);
+
+    // 雨滴落下时，中心区域会先被砸出一个短促的凹陷，
+    // 紧接着第一圈回弹才会最明显。
+    // 如果这里只有单峰包络，画面会更像轻微鼓包，不像“砸到水面”的感觉。
+    _applyRingImpulse(
+      point,
+      targetRadius: 0,
+      bandWidth: radius * 0.2,
+      strength: -strength * 0.38,
+    );
+    _applyRingImpulse(
+      point,
+      targetRadius: radius * 0.34,
+      bandWidth: radius * 0.18,
+      strength: strength,
+    );
+
+    for (var ringIndex = 0; ringIndex < resolvedRippleCount; ringIndex++) {
+      final progress = ringIndex / resolvedRippleCount;
+      final ringRadius =
+          radius * (0.72 + (resolvedTravelFactor * progress));
+      final bandWidth = radius * (0.14 + (progress * 0.08));
+      final ringStrength = strength * math.pow(0.72, ringIndex + 1).toDouble();
+
+      _applyRingImpulse(
+        point,
+        targetRadius: ringRadius,
+        bandWidth: bandWidth,
+        strength: ringStrength,
+      );
+      _applyRingImpulse(
+        point,
+        targetRadius: ringRadius + (bandWidth * 0.72),
+        bandWidth: bandWidth * 0.86,
+        strength: -ringStrength * 0.42,
+      );
+    }
+
     _peakEnergy = math.max(_peakEnergy, strength.abs());
     _revision++;
   }
@@ -193,6 +274,48 @@ class LiquidDisplacementField {
           // 而不是把液面推成明显单向流体。
           envelope *= (1.0 + (directionalBias * 0.18)).clamp(0.82, 1.18);
         }
+        final index = _indexOf(column, row);
+        _velocity[index] += strength * envelope;
+      }
+    }
+  }
+
+  /// 沿指定半径打出一圈环形能量。
+  ///
+  /// 雨滴的关键不是只有“中心有动静”，而是外圈能不能干净地扩开。
+  /// 这里单独做环形注入，是为了让第一圈、第二圈在初始阶段就有清楚的轮廓，
+  /// 不必完全等场自己慢慢推出来，画面会更接近“滴在水面上”的第一反应。
+  void _applyRingImpulse(
+    Offset point, {
+    required double targetRadius,
+    required double bandWidth,
+    required double strength,
+  }) {
+    final safeBandWidth = math.max(cellSize * 0.45, bandWidth);
+    final extent = targetRadius + safeBandWidth;
+    final extentInCells = math.max(1.0, extent / cellSize);
+    final centerColumn = point.dx / cellSize;
+    final centerRow = point.dy / cellSize;
+    final minColumn = math.max(0, (centerColumn - extentInCells).floor());
+    final maxColumn = math.min(
+      _columns - 1,
+      (centerColumn + extentInCells).ceil(),
+    );
+    final minRow = math.max(0, (centerRow - extentInCells).floor());
+    final maxRow = math.min(_rows - 1, (centerRow + extentInCells).ceil());
+
+    for (var row = minRow; row <= maxRow; row++) {
+      for (var column = minColumn; column <= maxColumn; column++) {
+        final cellCenter = Offset(column * cellSize, row * cellSize);
+        final distance = (cellCenter - point).distance;
+        if (distance > extent) {
+          continue;
+        }
+
+        final bandDistance = ((distance - targetRadius).abs() / safeBandWidth)
+            .clamp(0.0, 1.0);
+        final ring = 1.0 - bandDistance;
+        final envelope = ring * ring * (3 - (2 * ring));
         final index = _indexOf(column, row);
         _velocity[index] += strength * envelope;
       }

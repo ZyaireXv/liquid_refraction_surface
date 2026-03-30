@@ -1,5 +1,10 @@
-## 0.0.1
+## 0.1.0
 
-- 初始化 `liquid_refraction_surface` 独立 Flutter 包
-- 建立 `LiquidRefractionSurface` 和 `LiquidRefractionConfig` 公开入口
-- 补充液态折射迁移说明和基础测试
+- Reworked the package around two stable layouts: `content` and `background`
+- Added shader-driven content refraction and responsive background refraction
+- Added automatic rain ripples with `light`, `medium`, and `heavy` intensity presets
+- Added manual rain burst count override for automatic rain mode
+- Improved Android coordinate handling so ripple input matches the visual position
+- Refined the example app with image-based demos, settings controls, and interactive content mode
+
+

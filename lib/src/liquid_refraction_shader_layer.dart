@@ -8,6 +8,22 @@ import 'liquid_refraction_config.dart';
 const String _shaderAssetKey =
     'packages/liquid_refraction_surface/shaders/liquid_refraction.frag';
 
+// 这里把 uniform 下标和 shader 变量名一一对应写清楚。
+// FragmentShader 的绑定完全靠顺序，没有运行时校验。
+// 一旦 .frag 里调整了 uniform 声明顺序，而这里没有同步改，画面会直接错乱，
+// 但调试时只会看到“效果不对”，很难第一时间定位到是绑定错位。
+const int _uSizeXIndex = 0;
+const int _uSizeYIndex = 1;
+const int _uTimeIndex = 2;
+const int _uDisplacementScaleIndex = 3;
+const int _uHighlightOpacityIndex = 4;
+const int _uChromaticAberrationIndex = 5;
+const int _uMetalnessIndex = 6;
+const int _uRoughnessIndex = 7;
+
+const int _uTextureSamplerIndex = 0;
+const int _uFieldSamplerIndex = 1;
+
 /// 基于 fragment shader 的液态折射层。
 ///
 /// 这里不再自己截图 child，而是直接复用 `AnimatedSampler`。
@@ -49,17 +65,24 @@ class LiquidRefractionShaderLayer extends StatelessWidget {
         Canvas canvas,
       ) {
         shader
-          ..setFloat(0, size.width)
-          ..setFloat(1, size.height)
-          ..setFloat(2, animationTime)
-          ..setFloat(3, config.displacementScale)
-          ..setFloat(4, config.highlightOpacity)
-          ..setFloat(5, config.chromaticAberration)
-          ..setFloat(6, config.metalness)
-          ..setFloat(7, config.roughness)
-          ..setImageSampler(0, image, filterQuality: FilterQuality.medium)
+          ..setFloat(_uSizeXIndex, size.width)
+          ..setFloat(_uSizeYIndex, size.height)
+          ..setFloat(_uTimeIndex, animationTime)
+          ..setFloat(_uDisplacementScaleIndex, config.displacementScale)
+          ..setFloat(_uHighlightOpacityIndex, config.highlightOpacity)
+          ..setFloat(
+            _uChromaticAberrationIndex,
+            config.chromaticAberration,
+          )
+          ..setFloat(_uMetalnessIndex, config.metalness)
+          ..setFloat(_uRoughnessIndex, config.roughness)
           ..setImageSampler(
-            1,
+            _uTextureSamplerIndex,
+            image,
+            filterQuality: FilterQuality.medium,
+          )
+          ..setImageSampler(
+            _uFieldSamplerIndex,
             fieldTexture,
             filterQuality: FilterQuality.medium,
           );
