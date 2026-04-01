@@ -573,14 +573,21 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
   }
 
   Offset _mapPointerToFieldSpace(Offset position) {
-    if (defaultTargetPlatform != TargetPlatform.android || _size.isEmpty) {
-      return position;
-    }
-
-    // Android 侧当前拿到的屏幕坐标系和位移纹理采样方向还没有完全对齐。
-    // 直接把触点写进场里，会出现“手指点在下方，波纹却跑到上方”的错位。
-    // 这里先把输入映射到位移场实际使用的坐标系，优先保证交互落点正确。
-    return Offset(position.dx, _size.height - position.dy);
+    // 交互坐标这里始终保留 Flutter 本地坐标系，不再额外做 Android 侧翻转。
+    //
+    // 原来的做法是在 Dart 层把 Android 触点的 Y 轴先反过来，
+    // 但 shader 里又已经针对 OpenGLES 做了纹理采样方向修正。
+    // 这会让“触点坐标修正”和“采样坐标修正”分散在两层里，并且判断条件还不一致：
+    // - Dart 层只按“是不是 Android”判断
+    // - shader 层按“当前是不是 OpenGLES 后端”判断
+    //
+    // 一旦某些 Android 设备走 Vulkan、另一些走 OpenGLES，
+    // 同一份代码就会出现有的机型正常、有的机型上下颠倒的问题。
+    //
+    // 这里统一把坐标语义收口到一处：
+    // 交互输入始终使用 Flutter 的本地坐标，
+    // 图形后端差异只交给 shader 里的采样坐标转换处理。
+    return position;
   }
 
   Widget _buildEffectScene() {

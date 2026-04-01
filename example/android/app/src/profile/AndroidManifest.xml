@@ -4,4 +4,15 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+
+    <application>
+        <!--
+             profile 构建也保留同一套后端切换入口，
+             这样排查坐标和采样问题时，不必先在 debug 复现一遍，
+             再手改配置去看更接近真实性能的 profile 结果。
+        -->
+        <meta-data
+            android:name="io.flutter.embedding.android.ImpellerBackend"
+            android:value="${impellerBackend}" />
+    </application>
 </manifest>

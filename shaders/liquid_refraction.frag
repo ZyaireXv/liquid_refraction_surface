@@ -16,25 +16,43 @@ vec2 safeUv(vec2 uv) {
   return clamp(uv, vec2(0.001), vec2(0.999));
 }
 
-vec2 toTextureUv(vec2 screenUv) {
+vec2 toSceneTextureUv(vec2 screenUv) {
   vec2 textureUv = screenUv;
 
 #ifdef IMPELLER_TARGET_OPENGLES
-  // Android 侧常见的是 OpenGLES 管线，采样坐标和屏幕坐标在 Y 轴上的朝向并不一致。
-  // 这里统一先把“屏幕空间坐标”换成“纹理采样坐标”，后面的上下左右邻域采样都继续基于屏幕语义，
-  // 这样一来法线推导和折射偏移就不会因为平台差异而整体反向。
+  // Flutter SDK 对 Impeller OpenGLES 的说明很明确：
+  // 采样输入场景纹理时，Y 轴方向需要额外翻转，否则画面会上下颠倒。
+  //
+  // `uTexture` 来自 `AnimatedSampler`，本质上就是当前场景截图，
+  // 这里沿用官方建议的 OpenGLES 坐标修正。
   textureUv.y = 1.0 - textureUv.y;
 #endif
 
   return safeUv(textureUv);
 }
 
+vec2 toFieldTextureUv(vec2 screenUv) {
+  // `uField` 不是 `AnimatedSampler` 产出的场景截图，而是 Dart 侧通过
+  // `decodeImageFromPixels` 直接写入的一张位移数据纹理。
+  //
+  // 实机验证表明，这张纹理在 OpenGLES 下如果继续套用和场景纹理相同的 Y 轴翻转，
+  // 交互落点会出现“手点下方、波纹出现在上方”的垂直镜像。
+  //
+  // 这里把位移纹理和场景纹理拆开处理：
+  // - 场景纹理按 OpenGLES 要求做坐标翻转
+  // - 位移纹理保留 Flutter 屏幕坐标语义
+  //
+  // 这样输入坐标、位移场和最终画面就能收敛到同一套坐标系里，
+  // 不再需要在 Dart 层额外补一次 Android 触点反转。
+  return safeUv(screenUv);
+}
+
 vec4 sampleField(vec2 screenUv) {
-  return texture(uField, toTextureUv(screenUv));
+  return texture(uField, toFieldTextureUv(screenUv));
 }
 
 vec4 sampleScene(vec2 screenUv) {
-  return texture(uTexture, toTextureUv(screenUv));
+  return texture(uTexture, toSceneTextureUv(screenUv));
 }
 
 vec2 decodeNormal(vec4 fieldSample) {

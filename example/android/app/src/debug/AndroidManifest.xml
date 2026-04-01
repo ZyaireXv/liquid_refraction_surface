@@ -4,4 +4,20 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+
+    <application>
+        <!--
+             这里专门给调试构建预留 Impeller 后端开关。
+
+             默认情况下占位符会是空字符串，Flutter 继续自动选择后端；
+             只有在命令行显式传入 `impellerBackend=vulkan` 或
+             `impellerBackend=opengles` 时，这个值才会参与测试构建。
+
+             这样可以把“复现指定后端问题”的入口固定在示例工程里，
+             避免为了排查图形问题反复手改主 manifest。
+        -->
+        <meta-data
+            android:name="io.flutter.embedding.android.ImpellerBackend"
+            android:value="${impellerBackend}" />
+    </application>
 </manifest>

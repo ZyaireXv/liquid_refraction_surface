@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:liquid_refraction_surface/liquid_refraction_surface.dart';
 
 void main() {
@@ -37,6 +39,9 @@ class LiquidRefractionDemoPage extends StatefulWidget {
 
 class _LiquidRefractionDemoPageState extends State<LiquidRefractionDemoPage> {
   static const AssetImage _demoImage = AssetImage('assets/image.jpg');
+  static const MethodChannel _backendChannel = MethodChannel(
+    'liquid_refraction_surface/debug_backend',
+  );
 
   LiquidRefractionPlacement _placement = LiquidRefractionPlacement.content;
   _SurfacePreset _preset = _SurfacePreset.water;
@@ -52,11 +57,13 @@ class _LiquidRefractionDemoPageState extends State<LiquidRefractionDemoPage> {
   int _contentActionTapCount = 0;
   int _primaryActionTapCount = 0;
   int _cardTapCount = 0;
+  String _requestedBackendBadge = 'AUTO';
 
   @override
   void initState() {
     super.initState();
     _applyPreset(_preset);
+    _loadRequestedBackendBadge();
   }
 
   @override
@@ -74,19 +81,78 @@ class _LiquidRefractionDemoPageState extends State<LiquidRefractionDemoPage> {
     );
 
     return Scaffold(
-      body: LiquidRefractionSurface(
-        placement: _placement,
-        backgroundColor: _placement == LiquidRefractionPlacement.content
-            ? const Color(0xFF101B2A)
-            : const Color(0xFF0F1824),
-        backdrop: switch (_placement) {
-          LiquidRefractionPlacement.content => null,
-          LiquidRefractionPlacement.background => _buildBackdropStage(),
-        },
-        config: config,
-        child: _buildStageChild(),
+      body: _wrapWithRequestedBackendBanner(
+        LiquidRefractionSurface(
+          placement: _placement,
+          backgroundColor: _placement == LiquidRefractionPlacement.content
+              ? const Color(0xFF101B2A)
+              : const Color(0xFF0F1824),
+          backdrop: switch (_placement) {
+            LiquidRefractionPlacement.content => null,
+            LiquidRefractionPlacement.background => _buildBackdropStage(),
+          },
+          config: config,
+          child: _buildStageChild(),
+        ),
       ),
     );
+  }
+
+  Future<void> _loadRequestedBackendBadge() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return;
+    }
+
+    try {
+      final backend = await _backendChannel.invokeMethod<String>(
+        'getRequestedBackend',
+      );
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _requestedBackendBadge = _formatRequestedBackendBadge(backend);
+      });
+    } on PlatformException {
+      // 角标只用于辅助定位 Android 图形后端测试目标。
+      // 通道失败时保留默认值，不让调试标识反过来影响示例页本身的交互演示。
+    }
+  }
+
+  String _formatRequestedBackendBadge(String? backend) {
+    return switch ((backend ?? '').trim().toLowerCase()) {
+      'vulkan' => 'VULKAN',
+      'opengles' => 'OPENGL ES',
+      _ => 'AUTO',
+    };
+  }
+
+  Widget _wrapWithRequestedBackendBanner(Widget child) {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android || kReleaseMode) {
+      return child;
+    }
+
+    // 角标展示的是当前 Android 调试包里声明的“目标后端模式”。
+    //
+    // 这里刻意不用页面内普通文本，而是挂到右上角固定展示，
+    // 是因为这类信息只在排查图形问题时有价值，
+    // 但一旦看漏，就很容易把 OpenGLES 和 Vulkan 的现象混在一起。
+    // 用系统自带的 Banner 可以把提示固定在视野边缘，又不会打断主演示内容。
+    return Banner(
+      message: _requestedBackendBadge,
+      location: BannerLocation.topEnd,
+      color: _backendBadgeColor,
+      child: child,
+    );
+  }
+
+  Color get _backendBadgeColor {
+    return switch (_requestedBackendBadge) {
+      'VULKAN' => const Color(0xFF0D8B68),
+      'OPENGL ES' => const Color(0xFF9C5416),
+      _ => const Color(0xFF325E9F),
+    };
   }
 
   Widget _buildTopBar() {
