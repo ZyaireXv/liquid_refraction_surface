@@ -99,7 +99,7 @@ class _LiquidRefractionDemoPageState extends State<LiquidRefractionDemoPage> {
   }
 
   Future<void> _loadRequestedBackendBadge() async {
-    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android || kReleaseMode) {
       return;
     }
 

@@ -30,8 +30,7 @@
 
 ```yaml
 dependencies:
-  liquid_refraction_surface:
-    path: ../liquid_refraction_surface # 替换为你的实际路径或 GitHub 来源
+  liquid_refraction_surface: ^0.1.1
 ```
 
 ## 快速上手
@@ -187,11 +186,16 @@ const config = LiquidRefractionConfig(
 
 ## 平台声明
 
-目前我们完全专注在移动端的极致图形性能优化，带来了高等级的 Shader 端真实模拟：
+本组件底层基于 Flutter 的 `FragmentProgram` + `AnimatedSampler` 着色器管线构建，这套管线在所有 Flutter 目标平台上均已提供支持：
+
 - ✅ Android
 - ✅ iOS
+- ✅ Web (CanvasKit / skwasm)
+- ✅ macOS
+- ✅ Windows
+- ✅ Linux
 
-> **技术规避**：对于 Web、macOS、Windows 以及 Linux 端，组件出于对“不妥协高规格特效品质”的考量选择了挂起，并会优雅地展示静态兜底面板。由于没有妥协的降级粒子系统搅局，因此不必背负多端兼容带来的维护包袱。
+> **关于 Android 渲染后端的说明**：无论是 OpenGL ES 还是 Vulkan 后端，现在的坐标处理均已统一在着色器内部消化。无论设备支持哪种 Impeller 后端，水波效果和反馈位置都保持一致，不再出现坐标倒置的问题。
 
 ## 示例工程
 

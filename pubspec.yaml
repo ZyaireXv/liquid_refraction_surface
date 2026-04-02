@@ -1,6 +1,6 @@
 name: liquid_refraction_surface
 description: "A Flutter package for interactive liquid refraction surfaces with shader-driven ripples, content refraction, and reactive backgrounds."
-version: 0.1.0
+version: 0.1.1
 homepage: https://github.com/ZyaireXv/liquid_refraction_surface
 repository: https://github.com/ZyaireXv/liquid_refraction_surface
 issue_tracker: https://github.com/ZyaireXv/liquid_refraction_surface/issues

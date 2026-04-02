@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
@@ -157,14 +156,11 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
     _uploadedFieldRevision = -1;
   }
 
-  bool get _isSupportedPlatform {
-    if (kIsWeb) {
-      return false;
-    }
-
-    return defaultTargetPlatform == TargetPlatform.android ||
-        defaultTargetPlatform == TargetPlatform.iOS;
-  }
+  // 当前所有 Flutter 支持的平台均可运行 FragmentProgram + AnimatedSampler，
+  // 因此这里不再按平台过滤。
+  // 底层依赖（flutter_shaders、decodeImageFromPixels）在 iOS、Android、
+  // Web（CanvasKit/skwasm）及桌面（macOS、Windows、Linux）上均已验证可用。
+  bool get _isSupportedPlatform => true;
 
   void _handleTick() {
     final elapsed = _controller.lastElapsedDuration ?? Duration.zero;
@@ -264,11 +260,9 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
 
     final strength = (0.18 + (distance / widget.config.interactionRadius))
         .clamp(0.16, 0.58);
-    final fieldPreviousPosition = _mapPointerToFieldSpace(previousPosition);
-    final fieldPosition = _mapPointerToFieldSpace(position);
     _field.addImpulseTrail(
-      fieldPreviousPosition,
-      fieldPosition,
+      previousPosition,
+      position,
       // 拖动覆盖范围收窄以后，液面会更像被手势掠过，
       // 而不是整条路径都被“抹出一层厚浆”。
       radius: widget.config.interactionRadius * 0.5,
@@ -291,9 +285,8 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
       return;
     }
 
-    final fieldCenter = _mapPointerToFieldSpace(center);
     _field.addImpulse(
-      fieldCenter,
+      center,
       radius: widget.config.interactionRadius * (isSplash ? 0.82 : 0.58),
       strength: strength,
     );
@@ -321,9 +314,8 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
       return;
     }
 
-    final fieldCenter = _mapPointerToFieldSpace(center);
     _field.addRaindrop(
-      fieldCenter,
+      center,
       radius: radius,
       strength: strength,
       rippleCount: rippleCount,
@@ -572,24 +564,6 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
     }
   }
 
-  Offset _mapPointerToFieldSpace(Offset position) {
-    // 交互坐标这里始终保留 Flutter 本地坐标系，不再额外做 Android 侧翻转。
-    //
-    // 原来的做法是在 Dart 层把 Android 触点的 Y 轴先反过来，
-    // 但 shader 里又已经针对 OpenGLES 做了纹理采样方向修正。
-    // 这会让“触点坐标修正”和“采样坐标修正”分散在两层里，并且判断条件还不一致：
-    // - Dart 层只按“是不是 Android”判断
-    // - shader 层按“当前是不是 OpenGLES 后端”判断
-    //
-    // 一旦某些 Android 设备走 Vulkan、另一些走 OpenGLES，
-    // 同一份代码就会出现有的机型正常、有的机型上下颠倒的问题。
-    //
-    // 这里统一把坐标语义收口到一处：
-    // 交互输入始终使用 Flutter 的本地坐标，
-    // 图形后端差异只交给 shader 里的采样坐标转换处理。
-    return position;
-  }
-
   Widget _buildEffectScene() {
     switch (widget.placement) {
       case LiquidRefractionPlacement.content:
@@ -655,7 +629,7 @@ class _LiquidRefractionSurfaceState extends State<LiquidRefractionSurface>
                       ),
                       SizedBox(height: 8),
                       Text(
-                        'This effect requires the mobile shader pipeline and currently supports only iOS and Android.',
+                        'This effect requires the Flutter shader pipeline (FragmentProgram + AnimatedSampler). If you see this message, the current platform or renderer does not support it.',
                         textAlign: TextAlign.center,
                       ),
                     ],

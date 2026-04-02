@@ -30,9 +30,9 @@ Add the following dependency in your project's `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  liquid_refraction_surface:
-    path: ../liquid_refraction_surface # Replace with your actual path or GitHub source
+  liquid_refraction_surface: ^0.1.1
 ```
+
 
 ## Quick Start
 
@@ -187,11 +187,16 @@ The frontline control panel for precisely fine-tuning flow field performances:
 
 ## Platform Declaration
 
-We are currently entirely focused on extreme graphics performance optimization for mobile, bringing high-level true Shader simulations:
+The package uses the Flutter `FragmentProgram` + `AnimatedSampler` shader pipeline, which is supported across all Flutter targets:
+
 - ✅ Android
 - ✅ iOS
+- ✅ Web (CanvasKit / skwasm)
+- ✅ macOS
+- ✅ Windows
+- ✅ Linux
 
-> **Technical Avoidance**: For Web, macOS, Windows, and Linux, the component chooses to suspend itself based on the principle of "not compromising high-spec visual quality" and will gracefully display a static fallback panel. Because there is no compromised downgraded particle system causing trouble, you don't have to carry the maintenance burden brought by multi-platform compatibility.
+> **Note on Android backends**: Both OpenGL ES and Vulkan are handled correctly. Y-axis coordinate correction is applied entirely inside the shader, so behaviour is consistent regardless of which Impeller backend is selected.
 
 ## Example Project
 

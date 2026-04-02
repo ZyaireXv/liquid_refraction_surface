@@ -32,18 +32,8 @@ vec2 toSceneTextureUv(vec2 screenUv) {
 }
 
 vec2 toFieldTextureUv(vec2 screenUv) {
-  // `uField` 不是 `AnimatedSampler` 产出的场景截图，而是 Dart 侧通过
-  // `decodeImageFromPixels` 直接写入的一张位移数据纹理。
-  //
-  // 实机验证表明，这张纹理在 OpenGLES 下如果继续套用和场景纹理相同的 Y 轴翻转，
-  // 交互落点会出现“手点下方、波纹出现在上方”的垂直镜像。
-  //
-  // 这里把位移纹理和场景纹理拆开处理：
-  // - 场景纹理按 OpenGLES 要求做坐标翻转
-  // - 位移纹理保留 Flutter 屏幕坐标语义
-  //
-  // 这样输入坐标、位移场和最终画面就能收敛到同一套坐标系里，
-  // 不再需要在 Dart 层额外补一次 Android 触点反转。
+  // `uField` 由 Dart 侧直接写入，坐标语义与 Flutter 本地坐标系一致，
+  // 不需要像场景纹理那样在 OpenGLES 下做 Y 轴翻转。
   return safeUv(screenUv);
 }
 
